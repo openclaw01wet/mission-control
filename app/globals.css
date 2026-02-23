@@ -1,0 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
+:root{
+  --bg:#050508;
+  --accent:rgba(148,181,160,0.45);
+}
+html,body{padding:0;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto;}
+body{background:var(--bg);color:rgba(255,255,255,0.96)}
+.card{background:rgba(255,255,255,0.03);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.06);border-radius:14px}
