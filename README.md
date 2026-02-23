@@ -1,1 +1,0 @@
-# mission-control\nScaffolded Next.js app for Mission Control.\n\nRun locally:\n\n1. npm install\n2. npm run dev\n

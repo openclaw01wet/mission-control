@@ -1,1 +1,0 @@
-export default function Home(){\n  return (\n    <main style={{padding:32,fontFamily:'sans-serif'}}>\n      <h1>Mission Control</h1>\n      <p>Dashboard coming soon. Deployed by Lando.</p>\n    </main>\n  )\n}\n
