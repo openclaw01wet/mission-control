@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { AnimatePresence, motion } from 'framer-motion'
 
-type TabKey = 'dashboard' | 'projects' | 'timeline' | 'notes'
+type TabKey = 'dashboard' | 'projects' | 'timeline' | 'notes' | 'revenue'
 
 type Priority = { id: string; text: string; done: boolean; createdAt: number }
 
@@ -32,6 +32,10 @@ type GoalSettings = {
 type CostItem = { id: string; label: string; amount: number; currency: string; period: 'mo' | 'yr'; createdAt: number }
 
 type CalendarItem = { id: string; title: string; whenISO: string; location?: string; createdAt: number }
+
+type ClientStatus = 'active' | 'pending' | 'churned'
+
+type Client = { id: string; name: string; mrr: number; status: ClientStatus; startISO: string; createdAt: number }
 
 function uid(prefix = 'id') {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`
@@ -316,6 +320,8 @@ export default function MissionControlPage() {
   const { state: tab, setState: setTab } = useLocalStorageState<TabKey>('mc.tab', 'dashboard')
   const { state: costs, setState: setCosts } = useLocalStorageState<CostItem[]>('mc.costs', [])
   const { state: calendar, setState: setCalendar } = useLocalStorageState<CalendarItem[]>('mc.calendar', [])
+  const { state: revenueGoal, setState: setRevenueGoal } = useLocalStorageState<number>('mc.revenue.goal', 10000)
+  const { state: clients, setState: setClients } = useLocalStorageState<Client[]>('mc.revenue.clients', [])
 
   const [now, setNow] = useState(() => new Date())
   const [taskModalOpen, setTaskModalOpen] = useState(false)
@@ -339,6 +345,15 @@ export default function MissionControlPage() {
     whenISO: new Date().toISOString().slice(0, 16),
     location: '',
   })
+
+  const [clientDraft, setClientDraft] = useState<{ name: string; mrr: string; status: ClientStatus; startISO: string }>(
+    {
+      name: '',
+      mrr: '',
+      status: 'active',
+      startISO: new Date().toISOString().slice(0, 10),
+    }
+  )
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -468,6 +483,38 @@ export default function MissionControlPage() {
 
   const greeting = greetingFor(now)
 
+  const mrr = useMemo(() => clients.filter(c => c.status === 'active').reduce((s, c) => s + c.mrr, 0), [clients])
+
+  function lastSixMonths(nowDate: Date) {
+    const arr: { key: string; label: string; total: number }[] = []
+    const d = new Date(nowDate)
+    for (let i = 5; i >= 0; i--) {
+      const dt = new Date(d.getFullYear(), d.getMonth() - i, 1)
+      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`
+      const label = dt.toLocaleDateString('en-US', { month: 'short' })
+      arr.push({ key, label, total: 0 })
+    }
+    return arr
+  }
+
+  const revenueSeries = useMemo(() => {
+    const base = lastSixMonths(now)
+    const byKey = Object.fromEntries(base.map(b => [b.key, b])) as Record<string, { key: string; label: string; total: number }>
+    for (const c of clients) {
+      if (c.status !== 'active') continue
+      for (const b of Object.values(byKey)) {
+        // include months >= client start month
+        const start = new Date(c.startISO + 'T00:00:00')
+        const [y, m] = b.key.split('-').map(Number)
+        const monthStart = new Date(y, (m || 1) - 1, 1)
+        if (monthStart >= new Date(start.getFullYear(), start.getMonth(), 1)) {
+          b.total += c.mrr
+        }
+      }
+    }
+    return Object.values(byKey)
+  }, [clients, now])
+
   return (
     <div className="min-h-screen">
       {/* Sticky frosted-glass header */}
@@ -495,6 +542,9 @@ export default function MissionControlPage() {
               <TabButton active={tab === 'timeline'} label="📅 Timeline" onClick={() => setTab('timeline')} />
               <TabButton active={tab === 'notes'} label="📝 Notes" onClick={() => setTab('notes')} />
             </nav>
+            <nav className="hidden md:flex items-center gap-2 ml-2">
+              <TabButton active={tab === 'revenue'} label="💰 Revenue" onClick={() => setTab('revenue')} />
+            </nav>
 
             {/* Right: search + status */}
             <div className="flex items-center gap-3">
@@ -518,6 +568,7 @@ export default function MissionControlPage() {
             <TabButton active={tab === 'projects'} label="📋" onClick={() => setTab('projects')} />
             <TabButton active={tab === 'timeline'} label="📅" onClick={() => setTab('timeline')} />
             <TabButton active={tab === 'notes'} label="📝" onClick={() => setTab('notes')} />
+            <TabButton active={tab === 'revenue'} label="💰" onClick={() => setTab('revenue')} />
             <div className="flex-1" />
             <button
               type="button"
@@ -1080,6 +1131,203 @@ export default function MissionControlPage() {
                     </div>
                   </motion.div>
                 ))}
+              </div>
+            </motion.section>
+          ) : null}
+
+          {tab === 'revenue' ? (
+            <motion.section
+              key="revenue"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.25 }}
+              className="space-y-6"
+            >
+              <div className="mc-card p-5">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div>
+                    <div className="text-2xl font-bold tracking-tight">Revenue</div>
+                    <div className="text-sm text-[color:var(--muted)]">Local-first, glassmorphism, animated</div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="mc-card p-3 shadow-none">
+                      <div className="text-xs text-[color:var(--muted)]">Monthly revenue goal (€)</div>
+                      <input
+                        className="mc-input mt-1 px-3 py-2 text-sm w-[220px]"
+                        type="number"
+                        min={0}
+                        value={revenueGoal}
+                        onChange={(e) => setRevenueGoal(Math.max(0, Number(e.target.value || 0)))}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                {/* Gauge */}
+                <div className="mc-card p-5 flex items-center gap-5">
+                  <div
+                    className="mc-gauge"
+                    style={{
+                      background: `conic-gradient(var(--accentSolid) ${(Math.min(100, (mrr / Math.max(1, revenueGoal)) * 100)).toFixed(1)}%, rgba(255,255,255,0.06) 0)`,
+                    }}
+                  >
+                    <div className="text-center">
+                      <div className="text-xs text-[color:var(--muted)]">Progress</div>
+                      <div className="text-xl font-bold">{mrr.toFixed(0)}€</div>
+                      <div className="text-xs text-white/60">of {revenueGoal.toFixed(0)}€</div>
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm text-[color:var(--muted)]">MRR</div>
+                    <div className="text-2xl font-bold tracking-tight">{mrr.toFixed(2)}€ / mo</div>
+                    <div className="text-xs text-white/60 mt-1">Projected annual: {(mrr * 12).toFixed(0)}€</div>
+                    <div className="text-xs text-white/60">Needed to goal: {Math.max(0, revenueGoal - mrr).toFixed(0)}€ / mo</div>
+                  </div>
+                </div>
+
+                {/* Chart */}
+                <div className="mc-card p-5 xl:col-span-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold">Last 6 months</div>
+                      <div className="text-xs text-[color:var(--muted)]">CSS-only bar chart</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 h-[180px] flex items-end gap-3">
+                    {revenueSeries.map((p) => {
+                      const max = Math.max(1, ...revenueSeries.map((x) => x.total))
+                      const h = (p.total / max) * 100
+                      return (
+                        <div key={p.key} className="flex-1 flex flex-col items-center gap-2">
+                          <div className="w-full bg-white/5 rounded-t" style={{ height: `${h}%` }} />
+                          <div className="text-xs text-white/60">{p.label}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Clients */}
+              <div className="mc-card p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">Clients</div>
+                    <div className="text-xs text-[color:var(--muted)]">Add/edit/remove — auto MRR</div>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 lg:grid-cols-5 gap-2">
+                  <input
+                    className="mc-input px-3 py-2 text-sm w-full"
+                    placeholder="Name"
+                    value={clientDraft.name}
+                    onChange={(e) => setClientDraft((d) => ({ ...d, name: e.target.value }))}
+                  />
+                  <input
+                    className="mc-input px-3 py-2 text-sm w-full"
+                    placeholder="MRR (€)"
+                    type="number"
+                    value={clientDraft.mrr}
+                    onChange={(e) => setClientDraft((d) => ({ ...d, mrr: e.target.value }))}
+                  />
+                  <select
+                    className="mc-input px-3 py-2 text-sm w-full"
+                    value={clientDraft.status}
+                    onChange={(e) => setClientDraft((d) => ({ ...d, status: e.target.value as ClientStatus }))}
+                  >
+                    <option value="active">active</option>
+                    <option value="pending">pending</option>
+                    <option value="churned">churned</option>
+                  </select>
+                  <input
+                    className="mc-input px-3 py-2 text-sm w-full"
+                    type="date"
+                    value={clientDraft.startISO}
+                    onChange={(e) => setClientDraft((d) => ({ ...d, startISO: e.target.value }))}
+                  />
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-xl text-sm border border-[rgba(148,181,160,0.25)] mc-accent-glow hover:bg-white/5 transition"
+                    onClick={() => {
+                      const name = clientDraft.name.trim()
+                      const mrrVal = parseFloat(clientDraft.mrr)
+                      if (!name || isNaN(mrrVal)) return
+                      const c: Client = {
+                        id: uid('cli'),
+                        name,
+                        mrr: mrrVal,
+                        status: clientDraft.status,
+                        startISO: clientDraft.startISO,
+                        createdAt: Date.now(),
+                      }
+                      setClients((prev) => [c, ...prev])
+                      logActivity(`Added client: ${c.name} (${c.mrr}€/mo)`) 
+                      setClientDraft({ name: '', mrr: '', status: 'active', startISO: new Date().toISOString().slice(0, 10) })
+                    }}
+                  >
+                    Add
+                  </button>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {clients.length === 0 ? (
+                    <div className="text-sm text-white/60">No clients yet.</div>
+                  ) : (
+                    clients.map((c) => (
+                      <div key={c.id} className="mc-card p-4 shadow-none">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate">{c.name}</div>
+                            <div className="text-xs text-white/60">{c.mrr}€ / mo • {c.status} • since {new Date(c.startISO).toLocaleDateString('de-DE')}</div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="text-xs text-white/60 hover:text-white/90 transition"
+                              onClick={() => {
+                                // inline edit: reuse draft + open modal would be nicer; keep simple
+                                setClientDraft({ name: c.name, mrr: String(c.mrr), status: c.status, startISO: c.startISO })
+                                setClients((prev) => prev.filter((x) => x.id !== c.id))
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="text-xs text-red-300 hover:text-red-200 transition"
+                              onClick={() => setClients((prev) => prev.filter((x) => x.id !== c.id))}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Projections */}
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="mc-card p-4">
+                    <div className="text-xs text-[color:var(--muted)]">MRR</div>
+                    <div className="text-xl font-bold">{mrr.toFixed(0)}€</div>
+                    <div className="text-xs text-white/60">Annualized: {(mrr * 12).toFixed(0)}€</div>
+                  </div>
+                  <div className="mc-card p-4">
+                    <div className="text-xs text-[color:var(--muted)]">Goal</div>
+                    <div className="text-xl font-bold">{revenueGoal.toFixed(0)}€</div>
+                    <div className="text-xs text-white/60">Gap: {Math.max(0, revenueGoal - mrr).toFixed(0)}€ / mo</div>
+                  </div>
+                  <div className="mc-card p-4">
+                    <div className="text-xs text-[color:var(--muted)]">Needed growth</div>
+                    <div className="text-xl font-bold">{mrr === 0 ? '—' : `${Math.max(0, ((revenueGoal - mrr) / Math.max(1, mrr)) * 100).toFixed(1)}%`}</div>
+                    <div className="text-xs text-white/60">to hit monthly goal</div>
+                  </div>
+                </div>
               </div>
             </motion.section>
           ) : null}
