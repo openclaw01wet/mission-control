@@ -29,6 +29,10 @@ type GoalSettings = {
   goalDateISO: string // e.g. 2026-12-31
 }
 
+type CostItem = { id: string; label: string; amount: number; currency: string; period: 'mo' | 'yr'; createdAt: number }
+
+type CalendarItem = { id: string; title: string; whenISO: string; location?: string; createdAt: number }
+
 function uid(prefix = 'id') {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`
 }
@@ -310,6 +314,8 @@ export default function MissionControlPage() {
   const { state: tasks, setState: setTasks } = useLocalStorageState<Task[]>('mc.tasks', [])
   const { state: notes, setState: setNotes } = useLocalStorageState<string>('mc.notes', '')
   const { state: tab, setState: setTab } = useLocalStorageState<TabKey>('mc.tab', 'dashboard')
+  const { state: costs, setState: setCosts } = useLocalStorageState<CostItem[]>('mc.costs', [])
+  const { state: calendar, setState: setCalendar } = useLocalStorageState<CalendarItem[]>('mc.calendar', [])
 
   const [now, setNow] = useState(() => new Date())
   const [taskModalOpen, setTaskModalOpen] = useState(false)
@@ -322,6 +328,17 @@ export default function MissionControlPage() {
   })
 
   const [feedDraft, setFeedDraft] = useState('')
+  const [costDraft, setCostDraft] = useState<{ label: string; amount: string; currency: string; period: 'mo' | 'yr' }>({
+    label: '',
+    amount: '',
+    currency: '€',
+    period: 'mo',
+  })
+  const [eventDraft, setEventDraft] = useState<{ title: string; whenISO: string; location: string }>({
+    title: '',
+    whenISO: new Date().toISOString().slice(0, 16),
+    location: '',
+  })
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -358,6 +375,12 @@ export default function MissionControlPage() {
     // Here “projects” is approximated by tasks that are not done yet.
     return tasks.filter((t) => t.column !== 'done').length
   }, [tasks])
+
+  const monthlyCostTotal = useMemo(() => {
+    // Normalize yearly costs to monthly for the total
+    const toMonthly = (c: CostItem) => (c.period === 'yr' ? c.amount / 12 : c.amount)
+    return costs.reduce((sum, c) => sum + toMonthly(c), 0)
+  }, [costs])
 
   function logActivity(text: string) {
     const item: ActivityItem = { id: uid('act'), ts: Date.now(), text }
@@ -596,9 +619,9 @@ export default function MissionControlPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 2xl:grid-cols-4 gap-4">
                 {/* Activity feed */}
-                <div className="mc-card p-5 xl:col-span-2">
+                <div className="mc-card p-5 2xl:col-span-2">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="font-semibold">Activity</div>
@@ -636,6 +659,93 @@ export default function MissionControlPage() {
                         ))}
                       </div>
                     )}
+                  </div>
+                </div>
+
+                {/* Costs (monthly rollup) */}
+                <div className="mc-card p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold">Costs</div>
+                      <div className="text-xs text-[color:var(--muted)]">Monthly total normalized</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                    <input
+                      className="mc-input px-3 py-2 text-sm w-full"
+                      placeholder="Service (e.g. Vercel Pro)"
+                      value={costDraft.label}
+                      onChange={(e) => setCostDraft((d) => ({ ...d, label: e.target.value }))}
+                    />
+                    <input
+                      className="mc-input px-3 py-2 text-sm w-28"
+                      placeholder="Amount"
+                      type="number"
+                      value={costDraft.amount}
+                      onChange={(e) => setCostDraft((d) => ({ ...d, amount: e.target.value }))}
+                    />
+                    <select
+                      className="mc-input px-3 py-2 text-sm w-24"
+                      value={costDraft.currency}
+                      onChange={(e) => setCostDraft((d) => ({ ...d, currency: e.target.value }))}
+                    >
+                      <option>€</option>
+                      <option>$</option>
+                    </select>
+                    <select
+                      className="mc-input px-3 py-2 text-sm w-24"
+                      value={costDraft.period}
+                      onChange={(e) => setCostDraft((d) => ({ ...d, period: e.target.value as 'mo' | 'yr' }))}
+                    >
+                      <option value="mo">/mo</option>
+                      <option value="yr">/yr</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="px-3 py-2 rounded-xl text-sm border border-[rgba(148,181,160,0.25)] mc-accent-glow hover:bg-white/5 transition"
+                      onClick={() => {
+                        const amt = parseFloat(costDraft.amount)
+                        if (!costDraft.label.trim() || isNaN(amt)) return
+                        const item: CostItem = {
+                          id: uid('cost'),
+                          label: costDraft.label.trim(),
+                          amount: amt,
+                          currency: costDraft.currency,
+                          period: costDraft.period,
+                          createdAt: Date.now(),
+                        }
+                        setCosts((prev) => [item, ...prev])
+                        logActivity(`Added cost: ${item.label} ${item.amount}${item.currency}/${item.period}`)
+                        setCostDraft({ label: '', amount: '', currency: costDraft.currency, period: costDraft.period })
+                      }}
+                    >
+                      Add
+                    </button>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="text-sm text-[color:var(--muted)]">Monthly total</div>
+                    <div className="text-2xl font-bold mt-1">{monthlyCostTotal.toFixed(2)} {costs[0]?.currency || '€'}/mo</div>
+                  </div>
+
+                  <div className="mt-3 space-y-2 max-h-[220px] overflow-auto pr-1">
+                    {costs.map((c) => (
+                      <div key={c.id} className="flex items-center justify-between gap-3 rounded-xl px-3 py-2 border border-[color:var(--border)] bg-white/2">
+                        <div className="min-w-0">
+                          <div className="font-semibold truncate">{c.label}</div>
+                          <div className="text-xs text-white/60">{c.amount.toFixed(2)} {c.currency}/{c.period}</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="text-xs text-white/60 hover:text-red-300 transition"
+                          onClick={() => setCosts((prev) => prev.filter((x) => x.id !== c.id))}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                    {costs.length === 0 && <div className="text-sm text-white/60">Add your first cost item.</div>}
                   </div>
                 </div>
 
