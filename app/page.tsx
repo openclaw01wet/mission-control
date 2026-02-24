@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { AnimatePresence, motion } from 'framer-motion'
 
-type TabKey = 'dashboard' | 'projects' | 'timeline' | 'notes' | 'revenue' | 'command'
+type TabKey = 'dashboard' | 'projects' | 'timeline' | 'notes' | 'revenue' | 'command' | 'meetings' | 'intel'
 
 type Priority = { id: string; text: string; done: boolean; createdAt: number }
 
@@ -53,6 +53,40 @@ type Agent = {
 }
 
 type Decision = { id: string; dateISO: string; question: string; summary: string; consulted: string[] }
+
+type MeetingType = 'call' | 'zoom' | 'in-person'
+
+type AgendaItem = { id: string; text: string; done: boolean }
+
+type ActionItem = { id: string; text: string; done: boolean }
+
+type Meeting = {
+  id: string
+  title: string
+  whenISO: string // datetime-local
+  attendees: string
+  type: MeetingType
+  prep: string
+  agenda: AgendaItem[]
+  notes: string
+  actions: ActionItem[]
+  createdAt: number
+}
+
+type IntelCategory = 'AI News' | 'Industry Trends' | 'Competitor Watch' | 'Opportunities'
+
+type IntelImportance = 'hot' | 'notable' | 'reference'
+
+type IntelItem = {
+  id: string
+  category: IntelCategory
+  title: string
+  summary: string
+  source: string
+  dateISO: string
+  importance: IntelImportance
+  createdAt: number
+}
 
 function uid(prefix = 'id') {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`
@@ -393,6 +427,11 @@ export default function MissionControlPage() {
   }, [])
   const { state: decisions, setState: setDecisions } = useLocalStorageState<Decision[]>('mc.decisions', [])
 
+  const { state: meetings, setState: setMeetings } = useLocalStorageState<Meeting[]>('mc.meetings', [])
+  const { state: meetingsPast, setState: setMeetingsPast } = useLocalStorageState<Meeting[]>('mc.meetings.past', [])
+
+  const { state: intel, setState: setIntel } = useLocalStorageState<IntelItem[]>('mc.intel', [])
+
   const [now, setNow] = useState(() => new Date())
   const [taskModalOpen, setTaskModalOpen] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
@@ -421,6 +460,20 @@ export default function MissionControlPage() {
   const [taskText, setTaskText] = useState('')
   const [decisionDraft, setDecisionDraft] = useState<{ question: string; summary: string; consulted: string[] }>({ question: '', summary: '', consulted: [] })
 
+  const [meetingDraft, setMeetingDraft] = useState<{ title: string; whenISO: string; attendees: string; type: MeetingType; prep: string }>({
+    title: '',
+    whenISO: new Date().toISOString().slice(0, 16),
+    attendees: '',
+    type: 'zoom',
+    prep: '',
+  })
+  const [editingMeeting, setEditingMeeting] = useState<Meeting | null>(null)
+
+  const [intelDraft, setIntelDraft] = useState<{ category: IntelCategory; title: string; summary: string; source: string; importance: IntelImportance }>(
+    { category: 'AI News', title: '', summary: '', source: '', importance: 'notable' }
+  )
+  const [intelFilter, setIntelFilter] = useState<{ category: IntelCategory | 'all'; importance: IntelImportance | 'all' }>({ category: 'all', importance: 'all' })
+
   const [clientDraft, setClientDraft] = useState<{ name: string; mrr: string; status: ClientStatus; startISO: string }>(
     {
       name: '',
@@ -434,6 +487,24 @@ export default function MissionControlPage() {
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  // Auto-archive past meetings
+  useEffect(() => {
+    const upcoming: Meeting[] = []
+    const past: Meeting[] = [...meetingsPast]
+    for (const m of meetings) {
+      if (+new Date(m.whenISO) < +now - 60_000) past.push(m)
+      else upcoming.push(m)
+    }
+    if (upcoming.length !== meetings.length || past.length !== meetingsPast.length) {
+      setMeetings(upcoming.sort((a,b) => +new Date(a.whenISO) - +new Date(b.whenISO)))
+      // de-duplicate by id
+      const seen = new Set<string>()
+      const merged = past.filter(p => (seen.has(p.id) ? false : (seen.add(p.id), true)))
+      setMeetingsPast(merged)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -574,7 +645,7 @@ export default function MissionControlPage() {
 
   const revenueSeries = useMemo(() => {
     const base = lastSixMonths(now)
-    const byKey = Object.fromEntries(base.map(b => [b.key, b])) as Record<string, { key: string; label: string; total: number }>
+    const byKey: Record<string, { key: string; label: string; total: number }> = Object.fromEntries(base.map(b => [b.key, b]))
     for (const c of clients) {
       if (c.status !== 'active') continue
       for (const b of Object.values(byKey)) {
@@ -620,6 +691,8 @@ export default function MissionControlPage() {
             <nav className="hidden md:flex items-center gap-2 ml-2">
               <TabButton active={tab === 'revenue'} label="💰 Revenue" onClick={() => setTab('revenue')} />
               <TabButton active={tab === 'command'} label="🏢 Command Center" onClick={() => setTab('command')} />
+              <TabButton active={tab === 'meetings'} label="📞 Meetings" onClick={() => setTab('meetings')} />
+              <TabButton active={tab === 'intel'} label="📡 Intel" onClick={() => setTab('intel')} />
             </nav>
 
             {/* Right: search + status */}
@@ -646,6 +719,8 @@ export default function MissionControlPage() {
             <TabButton active={tab === 'notes'} label="📝" onClick={() => setTab('notes')} />
             <TabButton active={tab === 'revenue'} label="💰" onClick={() => setTab('revenue')} />
             <TabButton active={tab === 'command'} label="🏢" onClick={() => setTab('command')} />
+            <TabButton active={tab === 'meetings'} label="📞" onClick={() => setTab('meetings')} />
+            <TabButton active={tab === 'intel'} label="📡" onClick={() => setTab('intel')} />
             <div className="flex-1" />
             <button
               type="button"
@@ -1604,6 +1679,303 @@ export default function MissionControlPage() {
                   </div>
                 </div>
               </div>
+            </motion.section>
+          ) : null}
+
+          {tab === 'meetings' ? (
+            <motion.section
+              key="meetings"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.25 }}
+              className="space-y-6"
+            >
+              <div className="mc-card p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-2xl font-bold tracking-tight">Meetings</div>
+                    <div className="text-sm text-[color:var(--muted)]">Upcoming, agendas, notes, actions — with archive</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Today highlight */}
+              <div className="mc-card p-5">
+                <div className="font-semibold">Today</div>
+                <div className="mt-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {meetings
+                    .filter(m => new Date(m.whenISO).toDateString() === now.toDateString())
+                    .sort((a,b) => +new Date(a.whenISO) - +new Date(b.whenISO))
+                    .map(m => {
+                      const diff = +new Date(m.whenISO) - +now
+                      const left = Math.max(0, diff)
+                      const hh = String(Math.floor(left / 3_600_000)).padStart(2, '0')
+                      const mm = String(Math.floor((left % 3_600_000) / 60_000)).padStart(2, '0')
+                      const ss = String(Math.floor((left % 60_000) / 1000)).padStart(2, '0')
+                      return (
+                        <div key={m.id} className="mc-card p-4 shadow-none">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-semibold truncate">{m.title}</div>
+                              <div className="text-xs text-white/60">{new Date(m.whenISO).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} • {m.type} • {m.attendees || '—'}</div>
+                            </div>
+                            <div className="mc-countdown text-sm text-white/80">{hh}:{mm}:{ss}</div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  {meetings.filter(m => new Date(m.whenISO).toDateString() === now.toDateString()).length === 0 && (
+                    <div className="text-sm text-white/60">No meetings today.</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Add form */}
+              <div className="mc-card p-5">
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-2">
+                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Title" value={meetingDraft.title} onChange={(e) => setMeetingDraft((d) => ({ ...d, title: e.target.value }))} />
+                  <input className="mc-input px-3 py-2 text-sm w-full" type="datetime-local" value={meetingDraft.whenISO} onChange={(e) => setMeetingDraft((d) => ({ ...d, whenISO: e.target.value }))} />
+                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Attendees" value={meetingDraft.attendees} onChange={(e) => setMeetingDraft((d) => ({ ...d, attendees: e.target.value }))} />
+                  <select className="mc-input px-3 py-2 text-sm w-full" value={meetingDraft.type} onChange={(e) => setMeetingDraft((d) => ({ ...d, type: e.target.value as MeetingType }))}>
+                    <option value="call">call</option>
+                    <option value="zoom">zoom</option>
+                    <option value="in-person">in-person</option>
+                  </select>
+                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Prep notes" value={meetingDraft.prep} onChange={(e) => setMeetingDraft((d) => ({ ...d, prep: e.target.value }))} />
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-xl text-sm border border-[rgba(148,181,160,0.25)] mc-accent-glow hover:bg-white/5 transition"
+                    onClick={() => {
+                      const title = meetingDraft.title.trim(); if (!title) return
+                      const m: Meeting = { id: uid('mt'), title, whenISO: meetingDraft.whenISO, attendees: meetingDraft.attendees.trim(), type: meetingDraft.type, prep: meetingDraft.prep.trim(), agenda: [], notes: '', actions: [], createdAt: Date.now() }
+                      setMeetings(prev => [m, ...prev].sort((a,b) => +new Date(a.whenISO) - +new Date(b.whenISO)))
+                      setMeetingDraft({ title: '', whenISO: new Date().toISOString().slice(0, 16), attendees: '', type: 'zoom', prep: '' })
+                      logActivity(`Added meeting: ${m.title}`)
+                    }}
+                  >
+                    {editingMeeting ? 'Save' : 'Add'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Upcoming list */}
+              <div className="mc-card p-5">
+                <div className="font-semibold">Upcoming</div>
+                <div className="mt-3 space-y-2">
+                  {meetings.length === 0 ? (
+                    <div className="text-sm text-white/60">No upcoming meetings.</div>
+                  ) : (
+                    meetings.map((m) => (
+                      <div key={m.id} className="mc-card p-4 shadow-none">
+                        <details>
+                          <summary className="flex items-center justify-between gap-3 cursor-pointer list-none">
+                            <div className="min-w-0">
+                              <div className="font-semibold truncate">{m.title}</div>
+                              <div className="text-xs text-white/60">{new Date(m.whenISO).toLocaleString('de-DE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} • {m.type} • {m.attendees || '—'}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button type="button" className="text-xs text-white/60 hover:text-white/90 transition" onClick={(e) => { e.preventDefault(); setMeetingDraft({ title: m.title, whenISO: m.whenISO, attendees: m.attendees, type: m.type, prep: m.prep }); setEditingMeeting(m); setMeetings(prev => prev.filter(x=>x.id!==m.id)) }}>Edit</button>
+                              <button type="button" className="text-xs text-red-300 hover:text-red-200 transition" onClick={(e) => { e.preventDefault(); setMeetings(prev => prev.filter(x => x.id !== m.id)) }}>Delete</button>
+                            </div>
+                          </summary>
+                          <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3">
+                            <div className="mc-card p-3">
+                              <div className="text-xs text-[color:var(--muted)]">Agenda</div>
+                              <div className="mt-2 space-y-2">
+                                {m.agenda.map((it) => (
+                                  <label key={it.id} className="flex items-center gap-2 text-sm">
+                                    <input type="checkbox" className="accent-[color:var(--accentSolid)]" checked={it.done} onChange={() => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, agenda: x.agenda.map(a => a.id === it.id ? { ...a, done: !a.done } : a) } : x))} />
+                                    <input className={clsx('flex-1 bg-transparent outline-none', it.done ? 'line-through text-white/50' : 'text-white/90')} value={it.text} onChange={(e) => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, agenda: x.agenda.map(a => a.id === it.id ? { ...a, text: e.target.value } : a) } : x))} />
+                                  </label>
+                                ))}
+                                <button type="button" className="text-xs px-2 py-1 rounded border border-[color:var(--border)] hover:bg-white/5" onClick={() => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, agenda: [...x.agenda, { id: uid('ag'), text: 'New item', done: false }] } : x))}>Add item</button>
+                              </div>
+                            </div>
+                            <div className="mc-card p-3">
+                              <div className="text-xs text-[color:var(--muted)]">Notes</div>
+                              <textarea className="mc-input mt-2 px-3 py-2 text-sm w-full min-h-[120px]" value={m.notes} onChange={(e) => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, notes: e.target.value } : x))} />
+                            </div>
+                            <div className="mc-card p-3">
+                              <div className="text-xs text-[color:var(--muted)]">Action items</div>
+                              <div className="mt-2 space-y-2">
+                                {m.actions.map((it) => (
+                                  <label key={it.id} className="flex items-center gap-2 text-sm">
+                                    <input type="checkbox" className="accent-[color:var(--accentSolid)]" checked={it.done} onChange={() => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, actions: x.actions.map(a => a.id === it.id ? { ...a, done: !a.done } : a) } : x))} />
+                                    <input className={clsx('flex-1 bg-transparent outline-none', it.done ? 'line-through text-white/50' : 'text-white/90')} value={it.text} onChange={(e) => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, actions: x.actions.map(a => a.id === it.id ? { ...a, text: e.target.value } : a) } : x))} />
+                                  </label>
+                                ))}
+                                <button type="button" className="text-xs px-2 py-1 rounded border border-[color:var(--border)] hover:bg-white/5" onClick={() => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, actions: [...x.actions, { id: uid('ac'), text: 'New action', done: false }] } : x))}>Add action</button>
+                              </div>
+                            </div>
+                          </div>
+                        </details>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Past archive */}
+              <div className="mc-card p-5">
+                <div className="font-semibold">Past</div>
+                <div className="mt-3 space-y-2">
+                  {meetingsPast.length === 0 ? (
+                    <div className="text-sm text-white/60">No past meetings yet.</div>
+                  ) : (
+                    meetingsPast
+                      .sort((a,b) => +new Date(b.whenISO) - +new Date(a.whenISO))
+                      .map(m => (
+                        <div key={m.id} className="mc-card p-4 shadow-none">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-semibold truncate">{m.title}</div>
+                              <div className="text-xs text-white/60">{new Date(m.whenISO).toLocaleString('de-DE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} • {m.type} • {m.attendees || '—'}</div>
+                            </div>
+                            <button type="button" className="text-xs text-white/60 hover:text-white/90 transition" onClick={() => { setMeetings(prev => [m, ...prev]); setMeetingsPast(prev => prev.filter(x => x.id !== m.id)) }}>Restore</button>
+                          </div>
+                        </div>
+                      ))
+                  )}
+                </div>
+              </div>
+            </motion.section>
+          ) : null}
+
+          {tab === 'intel' ? (
+            <motion.section
+              key="intel"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.25 }}
+              className="space-y-6"
+            >
+              <div className="mc-card p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-2xl font-bold tracking-tight">Intel</div>
+                    <div className="text-sm text-[color:var(--muted)]">AI News, Trends, Competitors, Opportunities</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Daily Brief */}
+              <div className="mc-card p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-semibold">Daily Brief</div>
+                  <div className="text-xs text-[color:var(--muted)]">Top 3–5 by importance/date</div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {intel
+                    .slice()
+                    .sort((a,b) => {
+                      const impRank = (x: IntelImportance) => x === 'hot' ? 0 : x === 'notable' ? 1 : 2
+                      const r = impRank(a.importance) - impRank(b.importance)
+                      if (r !== 0) return r
+                      return +new Date(b.dateISO) - +new Date(a.dateISO)
+                    })
+                    .slice(0,5)
+                    .map((it) => (
+                      <div key={it.id} className="mc-card p-4 shadow-none">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate">{it.title}</div>
+                            <div className="text-xs text-white/60">{it.category} • {new Date(it.dateISO).toLocaleDateString('de-DE')}</div>
+                            <div className="text-sm text-white/80 mt-1 line-clamp-3">{it.summary}</div>
+                          </div>
+                          <div className="text-xs text-white/60 whitespace-nowrap">{it.importance === 'hot' ? '🔥 hot' : it.importance === 'notable' ? '⚡ notable' : '📌 reference'}</div>
+                        </div>
+                        {it.source && (
+                          <div className="mt-2 text-xs">
+                            <a className="underline text-white/80 hover:text-white" href={it.source} target="_blank" rel="noreferrer">Source</a>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  {intel.length === 0 && <div className="text-sm text-white/60">No intel yet.</div>}
+                </div>
+              </div>
+
+              {/* Add + Filter */}
+              <div className="mc-card p-5">
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-2">
+                  <select className="mc-input px-3 py-2 text-sm w-full" value={intelDraft.category} onChange={(e) => setIntelDraft((d) => ({ ...d, category: e.target.value as IntelCategory }))}>
+                    <option>AI News</option>
+                    <option>Industry Trends</option>
+                    <option>Competitor Watch</option>
+                    <option>Opportunities</option>
+                  </select>
+                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Title" value={intelDraft.title} onChange={(e) => setIntelDraft((d) => ({ ...d, title: e.target.value }))} />
+                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Source URL" value={intelDraft.source} onChange={(e) => setIntelDraft((d) => ({ ...d, source: e.target.value }))} />
+                  <select className="mc-input px-3 py-2 text-sm w-full" value={intelDraft.importance} onChange={(e) => setIntelDraft((d) => ({ ...d, importance: e.target.value as IntelImportance }))}>
+                    <option value="hot">🔥 hot</option>
+                    <option value="notable">⚡ notable</option>
+                    <option value="reference">📌 reference</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-xl text-sm border border-[rgba(148,181,160,0.25)] mc-accent-glow hover:bg-white/5 transition"
+                    onClick={() => {
+                      const title = intelDraft.title.trim(); if (!title) return
+                      const item: IntelItem = { id: uid('in'), category: intelDraft.category, title, summary: intelDraft.summary.trim(), source: intelDraft.source.trim(), dateISO: new Date().toISOString(), importance: intelDraft.importance, createdAt: Date.now() }
+                      setIntel((prev) => [item, ...prev])
+                      setIntelDraft({ category: 'AI News', title: '', summary: '', source: '', importance: 'notable' })
+                      logActivity(`Added intel: ${item.title}`)
+                    }}
+                  >
+                    Add
+                  </button>
+                </div>
+                <div className="mt-2">
+                  <textarea className="mc-input w-full min-h-[100px] px-3 py-2 text-sm" placeholder="Summary" value={intelDraft.summary} onChange={(e) => setIntelDraft((d) => ({ ...d, summary: e.target.value }))} />
+                </div>
+                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                  <div className="text-xs text-[color:var(--muted)]">Filter:</div>
+                  <select className="mc-input px-2 py-1 text-xs" value={intelFilter.category} onChange={(e) => setIntelFilter((f) => ({ ...f, category: e.target.value as any }))}>
+                    <option value="all">All categories</option>
+                    <option>AI News</option>
+                    <option>Industry Trends</option>
+                    <option>Competitor Watch</option>
+                    <option>Opportunities</option>
+                  </select>
+                  <select className="mc-input px-2 py-1 text-xs" value={intelFilter.importance} onChange={(e) => setIntelFilter((f) => ({ ...f, importance: e.target.value as any }))}>
+                    <option value="all">All importance</option>
+                    <option value="hot">🔥 hot</option>
+                    <option value="notable">⚡ notable</option>
+                    <option value="reference">📌 reference</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Lists by category */}
+              {(['AI News','Industry Trends','Competitor Watch','Opportunities'] as IntelCategory[]).map((cat) => (
+                <div key={cat} className="mc-card p-5">
+                  <div className="font-semibold">{cat}</div>
+                  <div className="mt-3 space-y-2">
+                    {intel
+                      .filter(it => it.category === cat)
+                      .filter(it => (intelFilter.importance === 'all' ? true : it.importance === intelFilter.importance))
+                      .map((it) => (
+                        <div key={it.id} className="mc-card p-4 shadow-none">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-semibold truncate">{it.title}</div>
+                              <div className="text-xs text-white/60">{new Date(it.dateISO).toLocaleDateString('de-DE')} • {it.source ? <a className="underline" href={it.source} target="_blank" rel="noreferrer">source</a> : '—'}</div>
+                              <div className="text-sm text-white/80 mt-1">{it.summary}</div>
+                            </div>
+                            <div className="text-xs text-white/60 whitespace-nowrap">{it.importance === 'hot' ? '🔥 hot' : it.importance === 'notable' ? '⚡ notable' : '📌 reference'}</div>
+                          </div>
+                        </div>
+                      ))}
+                    {intel.filter(it => it.category === cat).length === 0 && (
+                      <div className="text-sm text-white/60">No items.</div>
+                    )}
+                  </div>
+                </div>
+              ))}
             </motion.section>
           ) : null}
 
