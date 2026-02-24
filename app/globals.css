@@ -1,8 +1,95 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
-:root{
-  --bg:#050508;
-  --accent:rgba(148,181,160,0.45);
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #050508;
+  --card: rgba(255, 255, 255, 0.03);
+  --border: rgba(255, 255, 255, 0.06);
+  --muted: rgba(255, 255, 255, 0.7);
+  --muted2: rgba(255, 255, 255, 0.5);
+  --accent: rgba(148, 181, 160, 0.45);
+  --accentSolid: rgba(148, 181, 160, 0.85);
+
+  --radius: 14px;
+  --shadow: 0 12px 45px rgba(0, 0, 0, 0.55);
+
+  --pad: 2.5rem;
 }
-html,body{padding:0;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto;}
-body{background:var(--bg);color:rgba(255,255,255,0.96)}
-.card{background:rgba(255,255,255,0.03);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.06);border-radius:14px}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto;
+}
+
+body {
+  background: var(--bg);
+  color: rgba(255, 255, 255, 0.96);
+}
+
+::selection {
+  background: rgba(148, 181, 160, 0.25);
+}
+
+@layer components {
+  .mc-card {
+    background: var(--card);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  .mc-input {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    outline: none;
+    transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  }
+
+  .mc-input:focus {
+    border-color: rgba(148, 181, 160, 0.25);
+    box-shadow: 0 0 0 4px rgba(148, 181, 160, 0.08);
+  }
+
+  .mc-accent-glow {
+    box-shadow: 0 0 0 1px rgba(148, 181, 160, 0.18), 0 0 26px rgba(148, 181, 160, 0.22);
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseSoft {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+.mc-fade-in-up {
+  animation: fadeInUp 520ms ease both;
+}
+
+.mc-status-dot {
+  animation: pulseSoft 1.6s ease-in-out infinite;
+}
