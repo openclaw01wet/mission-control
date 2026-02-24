@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { AnimatePresence, motion } from 'framer-motion'
 
-type TabKey = 'dashboard' | 'projects' | 'timeline' | 'notes' | 'revenue'
+type TabKey = 'dashboard' | 'projects' | 'timeline' | 'notes' | 'revenue' | 'command'
 
 type Priority = { id: string; text: string; done: boolean; createdAt: number }
 
@@ -36,6 +36,23 @@ type CalendarItem = { id: string; title: string; whenISO: string; location?: str
 type ClientStatus = 'active' | 'pending' | 'churned'
 
 type Client = { id: string; name: string; mrr: number; status: ClientStatus; startISO: string; createdAt: number }
+
+type AgentStatus = 'online' | 'busy' | 'offline'
+
+type Agent = {
+  id: string
+  name: string
+  role: string
+  status: AgentStatus
+  model: string
+  lastActive: number
+  description: string
+  capabilities: string[]
+  activity: { id: string; ts: number; text: string }[]
+  perfNotes?: string
+}
+
+type Decision = { id: string; dateISO: string; question: string; summary: string; consulted: string[] }
 
 function uid(prefix = 'id') {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`
@@ -323,6 +340,45 @@ export default function MissionControlPage() {
   const { state: revenueGoal, setState: setRevenueGoal } = useLocalStorageState<number>('mc.revenue.goal', 10000)
   const { state: clients, setState: setClients } = useLocalStorageState<Client[]>('mc.revenue.clients', [])
 
+  const sampleAgents: Agent[] = [
+    {
+      id: uid('ag'),
+      name: 'Lando',
+      role: 'Strategic Tech Assistant',
+      status: 'online',
+      model: 'openai/gpt-5.2',
+      lastActive: Date.now(),
+      description: 'Calm, precise, forward-looking assistant orchestrating work and code.',
+      capabilities: ['Code patches', 'CLI orchestration', 'Docs synthesis'],
+      activity: [],
+      perfNotes: 'Strong on multi-step ops and quick patching.',
+    },
+    {
+      id: uid('ag'),
+      name: 'Jiggy',
+      role: 'Coding Agent',
+      status: 'busy',
+      model: 'openai/gpt-5.2-codex',
+      lastActive: Date.now() - 1000 * 60 * 8,
+      description: 'Implements small, safe, incremental code changes.',
+      capabilities: ['Refactors', 'Build/CI fixes', 'Lint/type fixes'],
+      activity: [],
+    },
+    {
+      id: uid('ag'),
+      name: 'Teddy',
+      role: 'Research & Messaging',
+      status: 'offline',
+      model: 'google/gemini-flash',
+      lastActive: Date.now() - 1000 * 60 * 60,
+      description: 'Concise web research, messaging workflows.',
+      capabilities: ['Web search', 'Summaries', 'Comms drafts'],
+      activity: [],
+    },
+  ]
+  const { state: agents, setState: setAgents } = useLocalStorageState<Agent[]>('mc.agents', sampleAgents)
+  const { state: decisions, setState: setDecisions } = useLocalStorageState<Decision[]>('mc.decisions', [])
+
   const [now, setNow] = useState(() => new Date())
   const [taskModalOpen, setTaskModalOpen] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
@@ -345,6 +401,11 @@ export default function MissionControlPage() {
     whenISO: new Date().toISOString().slice(0, 16),
     location: '',
   })
+
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null)
+  const [sendTaskOpen, setSendTaskOpen] = useState(false)
+  const [taskText, setTaskText] = useState('')
+  const [decisionDraft, setDecisionDraft] = useState<{ question: string; summary: string; consulted: string[] }>({ question: '', summary: '', consulted: [] })
 
   const [clientDraft, setClientDraft] = useState<{ name: string; mrr: string; status: ClientStatus; startISO: string }>(
     {
@@ -544,6 +605,7 @@ export default function MissionControlPage() {
             </nav>
             <nav className="hidden md:flex items-center gap-2 ml-2">
               <TabButton active={tab === 'revenue'} label="💰 Revenue" onClick={() => setTab('revenue')} />
+              <TabButton active={tab === 'command'} label="🏢 Command Center" onClick={() => setTab('command')} />
             </nav>
 
             {/* Right: search + status */}
@@ -569,6 +631,7 @@ export default function MissionControlPage() {
             <TabButton active={tab === 'timeline'} label="📅" onClick={() => setTab('timeline')} />
             <TabButton active={tab === 'notes'} label="📝" onClick={() => setTab('notes')} />
             <TabButton active={tab === 'revenue'} label="💰" onClick={() => setTab('revenue')} />
+            <TabButton active={tab === 'command'} label="🏢" onClick={() => setTab('command')} />
             <div className="flex-1" />
             <button
               type="button"
@@ -1131,6 +1194,204 @@ export default function MissionControlPage() {
                     </div>
                   </motion.div>
                 ))}
+              </div>
+            </motion.section>
+          ) : null}
+
+          {tab === 'command' ? (
+            <motion.section
+              key="command"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.25 }}
+              className="space-y-6"
+            >
+              <div className="mc-card p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-2xl font-bold tracking-tight">Command Center</div>
+                    <div className="text-sm text-[color:var(--muted)]">Manage your AI agents and key decisions</div>
+                  </div>
+                  <div className="text-sm text-[color:var(--muted)]">Agents: {agents.length}</div>
+                </div>
+              </div>
+
+              {/* Agent drawer + send task modal */}
+              <AnimatePresence>
+                {activeAgentId ? (
+                  <>
+                    <motion.div className="fixed inset-0 z-50 bg-black/60" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setActiveAgentId(null)} />
+                    <motion.div className="mc-drawer mc-card p-5 overflow-y-auto" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'tween', duration: 0.25 }}>
+                      {(() => {
+                        const a = agents.find(x => x.id === activeAgentId)
+                        if (!a) return null
+                        return (
+                          <div>
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-xl font-semibold">{a.name}</div>
+                                <div className="text-sm text-white/70">{a.role}</div>
+                              </div>
+                              <button type="button" className="text-sm text-white/60 hover:text-white/90" onClick={() => setActiveAgentId(null)}>Close</button>
+                            </div>
+                            <div className="mt-3 text-sm text-white/80">{a.description}</div>
+                            <div className="mt-3">
+                              <div className="text-xs text-[color:var(--muted)]">Capabilities</div>
+                              <div className="mt-1 flex flex-wrap gap-2">
+                                {a.capabilities.map((c, i) => (
+                                  <span key={i} className="text-[11px] px-2 py-1 rounded-full border border-[color:var(--border)] bg-white/2">{c}</span>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="mt-3 grid grid-cols-3 gap-2">
+                              <div className="mc-card p-3">
+                                <div className="text-xs text-[color:var(--muted)]">Status</div>
+                                <div className="text-sm capitalize">{a.status}</div>
+                              </div>
+                              <div className="mc-card p-3">
+                                <div className="text-xs text-[color:var(--muted)]">Model</div>
+                                <div className="text-sm">{a.model}</div>
+                              </div>
+                              <div className="mc-card p-3">
+                                <div className="text-xs text-[color:var(--muted)]">Last active</div>
+                                <div className="text-sm">{new Date(a.lastActive).toLocaleString('de-DE')}</div>
+                              </div>
+                            </div>
+                            {a.perfNotes ? (
+                              <div className="mt-3 mc-card p-3">
+                                <div className="text-xs text-[color:var(--muted)]">Performance notes</div>
+                                <div className="text-sm">{a.perfNotes}</div>
+                              </div>
+                            ) : null}
+
+                            <div className="mt-3 flex items-center justify-between gap-3">
+                              <div className="font-semibold">Recent activity</div>
+                              <button
+                                type="button"
+                                className="px-3 py-2 rounded-xl text-sm border border-[rgba(148,181,160,0.25)] mc-accent-glow hover:bg-white/5 transition"
+                                onClick={() => setSendTaskOpen(true)}
+                              >
+                                Send Task
+                              </button>
+                            </div>
+                            <div className="mt-2 space-y-2">
+                              {a.activity.length === 0 ? (
+                                <div className="text-sm text-white/60">No activity yet.</div>
+                              ) : (
+                                a.activity.map(entry => (
+                                  <div key={entry.id} className="mc-card p-3 shadow-none">
+                                    <div className="text-sm text-white/90">{entry.text}</div>
+                                    <div className="text-xs text-white/50">{new Date(entry.ts).toLocaleString('de-DE')}</div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })()}
+                    </motion.div>
+                  </>
+                ) : null}
+              </AnimatePresence>
+
+              <Modal open={sendTaskOpen} title="Send Task" onClose={() => setSendTaskOpen(false)}>
+                <div>
+                  <textarea className="mc-input w-full min-h-[140px] px-3 py-2 text-sm" placeholder="Describe the task…" value={taskText} onChange={(e) => setTaskText(e.target.value)} />
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    <button type="button" className="px-4 py-2 rounded-xl text-sm border border-[color:var(--border)] hover:bg-white/5 transition" onClick={() => setSendTaskOpen(false)}>Cancel</button>
+                    <button
+                      type="button"
+                      className="px-4 py-2 rounded-xl text-sm border border-[rgba(148,181,160,0.25)] mc-accent-glow hover:bg-white/5 transition"
+                      onClick={() => {
+                        const txt = taskText.trim(); if (!txt || !activeAgentId) return
+                        setAgents(prev => prev.map(a => a.id === activeAgentId ? { ...a, activity: [{ id: uid('aa'), ts: Date.now(), text: `Task: ${txt}` }, ...a.activity].slice(0,50), lastActive: Date.now(), status: 'busy' } : a))
+                        setTimeout(() => setAgents(p => p.map(a => a.id === activeAgentId ? { ...a, status: 'online' } : a)), 1200)
+                        logActivity(`Sent task to ${agents.find(a=>a.id===activeAgentId)?.name || 'agent'}`)
+                        setTaskText(''); setSendTaskOpen(false)
+                      }}
+                    >
+                      Send
+                    </button>
+                  </div>
+                </div>
+              </Modal>
+
+              {/* Agents grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                {agents.map((a) => (
+                  <div key={a.id} className="mc-card p-5 hover:bg-white/5 transition cursor-pointer" onClick={() => setActiveAgentId(a.id)}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate">{a.name}</div>
+                        <div className="text-sm text-white/70 truncate">{a.role}</div>
+                        <div className="mt-2 text-xs text-white/60 truncate">Model: {a.model}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={clsx('h-2.5 w-2.5 rounded-full', a.status === 'online' && 'bg-emerald-400', a.status === 'busy' && 'bg-amber-400', a.status === 'offline' && 'bg-red-400')} />
+                        <span className="text-xs text-white/60 capitalize">{a.status}</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 text-xs text-white/50">Last active: {new Date(a.lastActive).toLocaleString('de-DE', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Executive Decisions */}
+              <div className="mc-card p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">Executive Decisions</div>
+                    <div className="text-xs text-[color:var(--muted)]">Record key calls and consulted agents</div>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-2">
+                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Question asked" value={decisionDraft.question} onChange={(e) => setDecisionDraft((d) => ({ ...d, question: e.target.value }))} />
+                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Decision summary" value={decisionDraft.summary} onChange={(e) => setDecisionDraft((d) => ({ ...d, summary: e.target.value }))} />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {agents.map((a) => (
+                      <label key={a.id} className="text-xs text-white/70 flex items-center gap-1">
+                        <input type="checkbox" className="accent-[color:var(--accentSolid)]" checked={decisionDraft.consulted.includes(a.name)} onChange={(e) => setDecisionDraft((d) => ({ ...d, consulted: e.target.checked ? [...new Set([...d.consulted, a.name])] : d.consulted.filter((x) => x !== a.name) }))} />
+                        {a.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-xl text-sm border border-[rgba(148,181,160,0.25)] mc-accent-glow hover:bg-white/5 transition"
+                    onClick={() => {
+                      const q = decisionDraft.question.trim(); const s = decisionDraft.summary.trim();
+                      if (!q || !s) return
+                      const dec: Decision = { id: uid('dec'), dateISO: new Date().toISOString(), question: q, summary: s, consulted: [...decisionDraft.consulted] }
+                      setDecisions((prev) => [dec, ...prev])
+                      setDecisionDraft({ question: '', summary: '', consulted: [] })
+                      logActivity(`Decision recorded: ${q}`)
+                    }}
+                  >
+                    Add decision
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {decisions.length === 0 ? (
+                    <div className="text-sm text-white/60">No decisions yet.</div>
+                  ) : (
+                    decisions.map((d) => (
+                      <div key={d.id} className="mc-card p-4 shadow-none">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate">{d.question}</div>
+                            <div className="text-xs text-white/60">{new Date(d.dateISO).toLocaleDateString('de-DE')} • consulted: {d.consulted.join(', ') || '—'}</div>
+                          </div>
+                          <div className="text-sm text-white/80 max-w-[60ch] truncate">{d.summary}</div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </motion.section>
           ) : null}
