@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "package.json", "use": "@vercel/next" }
-  ],
+  "framework": "nextjs",
+  "installCommand": "npm ci",
+  "buildCommand": "npm ci && npm run build",
   "routes": [
     { "src": "/(.*)", "dest": "/$1" }
   ]
