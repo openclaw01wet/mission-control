@@ -377,6 +377,20 @@ export default function MissionControlPage() {
     },
   ]
   const { state: agents, setState: setAgents } = useLocalStorageState<Agent[]>('mc.agents', sampleAgents)
+  // one-time sync: ensure Lando shows current backend model by default
+  useEffect(() => {
+    const targetModel = 'xai/grok-4-fast-reasoning'
+    setAgents(prev => {
+      if (!Array.isArray(prev)) return prev
+      let changed = false
+      const next = prev.map(a => {
+        if (a.name === 'Lando' && a.model !== targetModel) { changed = true; return { ...a, model: targetModel, lastActive: Date.now() } }
+        return a
+      })
+      return changed ? next : prev
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const { state: decisions, setState: setDecisions } = useLocalStorageState<Decision[]>('mc.decisions', [])
 
   const [now, setNow] = useState(() => new Date())
