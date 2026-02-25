@@ -1,0 +1,25 @@
+Refactor Mission Control: Replaced 'Meetings' tab with 'Costs' tab.
+
+Accomplishments:
+1. Removed 'Meetings' Tab:
+   - Deleted 'Meetings' tab button and entire content section.
+   - Removed 'meetings', 'meetingsPast', 'meetingDraft', 'editingMeeting' state.
+   - Removed 'Meeting', 'MeetingType', 'AgendaItem', 'ActionItem' types.
+   - Removed 'Today' and 'Upcoming' widgets.
+   - Removed auto-archive effect for meetings.
+
+2. Added 'Costs' Tab:
+   - Added 'Costs' tab button with icon 💸.
+   - Implemented 'Costs' view (when `tab === 'costs'`).
+   - Added logic to fetch `/mc/costs` when on the 'costs' tab (in addition to 'revenue' tab).
+   - Created detailed view:
+     - **Overview**: 3 MetricCards (Total Cost, Total Tokens, Budget Usage).
+     - **Model Breakdown**: Table showing Model Name | Cost ($) | Usage Share %.
+     - **Pricing Reference**: Static card showing assumed costs for popular models.
+
+3. Visuals:
+   - Maintained glassmorphism/card style.
+   - Used `MetricCard` for KPIs.
+   - Added a visual progress bar for budget usage.
+
+The refactor is complete and ready for use.

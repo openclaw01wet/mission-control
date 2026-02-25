@@ -1,0 +1,19 @@
+
+> mission-control@0.1.0 start
+> next start
+
+   ▲ Next.js 14.0.0
+   - Local:        http://localhost:3000
+
+ ⚠ "next start" does not work with "output: standalone" configuration. Use "node .next/standalone/server.js" instead.
+ ✓ Ready in 207ms
+Missing `origin` header from a forwarded Server Actions request.
+Failed to find Server Action "x". This request might be from an older or newer deployment.
+Missing `origin` header from a forwarded Server Actions request.
+Failed to find Server Action "x". This request might be from an older or newer deployment.
+Missing `origin` header from a forwarded Server Actions request.
+Failed to find Server Action "x". This request might be from an older or newer deployment.
+Missing `origin` header from a forwarded Server Actions request.
+Failed to find Server Action "x". This request might be from an older or newer deployment.
+Missing `origin` header from a forwarded Server Actions request.
+Failed to find Server Action "x". This request might be from an older or newer deployment.

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { AnimatePresence, motion } from 'framer-motion'
 
-type TabKey = 'dashboard' | 'projects' | 'timeline' | 'notes' | 'revenue' | 'command' | 'meetings' | 'intel'
+type TabKey = 'dashboard' | 'projects' | 'timeline' | 'notes' | 'revenue' | 'command' | 'costs' | 'intel'
 
 type Priority = { id: string; text: string; done: boolean; createdAt: number }
 
@@ -54,24 +54,6 @@ type Agent = {
 
 type Decision = { id: string; dateISO: string; question: string; summary: string; consulted: string[] }
 
-type MeetingType = 'call' | 'zoom' | 'in-person'
-
-type AgendaItem = { id: string; text: string; done: boolean }
-
-type ActionItem = { id: string; text: string; done: boolean }
-
-type Meeting = {
-  id: string
-  title: string
-  whenISO: string // datetime-local
-  attendees: string
-  type: MeetingType
-  prep: string
-  agenda: AgendaItem[]
-  notes: string
-  actions: ActionItem[]
-  createdAt: number
-}
 
 type IntelCategory = 'AI News' | 'Industry Trends' | 'Competitor Watch' | 'Opportunities'
 
@@ -86,6 +68,12 @@ type IntelItem = {
   dateISO: string
   importance: IntelImportance
   createdAt: number
+}
+
+type CostBreakdown = {
+  totalTokens: number
+  totalCost: number
+  breakdown: Record<string, number>
 }
 
 function uid(prefix = 'id') {
@@ -359,7 +347,7 @@ export default function MissionControlPage() {
   const searchRef = useRef<HTMLInputElement | null>(null)
 
   const { state: goal, setState: setGoal } = useLocalStorageState<GoalSettings>('mc.goal', {
-    name: 'Nils',
+    name: 'Batu & Nils',
     goalPercent: 42,
     goalDateISO: new Date(new Date().getFullYear(), 11, 31).toISOString().slice(0, 10),
   })
@@ -413,7 +401,7 @@ export default function MissionControlPage() {
   const { state: agents, setState: setAgents } = useLocalStorageState<Agent[]>('mc.agents', sampleAgents)
   // one-time sync: ensure Lando shows current backend model by default
   useEffect(() => {
-    const targetModel = 'xai/grok-4-fast-reasoning'
+    const targetModel = 'google/gemini-3-flash-preview'
     setAgents(prev => {
       if (!Array.isArray(prev)) return prev
       let changed = false
@@ -426,9 +414,6 @@ export default function MissionControlPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const { state: decisions, setState: setDecisions } = useLocalStorageState<Decision[]>('mc.decisions', [])
-
-  const { state: meetings, setState: setMeetings } = useLocalStorageState<Meeting[]>('mc.meetings', [])
-  const { state: meetingsPast, setState: setMeetingsPast } = useLocalStorageState<Meeting[]>('mc.meetings.past', [])
 
   const { state: intel, setState: setIntel } = useLocalStorageState<IntelItem[]>('mc.intel', [])
 
@@ -460,14 +445,57 @@ export default function MissionControlPage() {
   const [taskText, setTaskText] = useState('')
   const [decisionDraft, setDecisionDraft] = useState<{ question: string; summary: string; consulted: string[] }>({ question: '', summary: '', consulted: [] })
 
-  const [meetingDraft, setMeetingDraft] = useState<{ title: string; whenISO: string; attendees: string; type: MeetingType; prep: string }>({
-    title: '',
-    whenISO: new Date().toISOString().slice(0, 16),
-    attendees: '',
-    type: 'zoom',
-    prep: '',
-  })
-  const [editingMeeting, setEditingMeeting] = useState<Meeting | null>(null)
+  const [engineStatus, setEngineStatus] = useState<'online' | 'offline' | 'checking'>('checking')
+  const engineUrl = '' // Relative path - will work on any domain/tunnel
+  const engineKey = '' // No key needed for unified local-first server
+
+  const [usageCosts, setUsageCosts] = useState<{
+    totalCost: number
+    totalTokens: number
+    breakdown: { model: string; label: string; input: number; output: number; cache: number; cost: number; count: number }[]
+    dailyHistory: { date: string; value: number }[]
+    rates: Record<string, { label: string; input: number; output: number }>
+  } | null>(null)
+
+  // Engine Heartbeat + Sync
+  useEffect(() => {
+    const checkEngine = async () => {
+      try {
+        const res = await fetch(`${engineUrl}/mc/status`, { headers: { 'x-api-key': engineKey } })
+        if (res.ok) {
+          setEngineStatus('online')
+          console.log('Engine connected:', await res.json())
+        } else {
+          setEngineStatus('offline')
+        }
+      } catch (e) {
+        setEngineStatus('offline')
+      }
+    }
+    // Check immediately
+    checkEngine()
+    // Poll every 30s
+    const t = setInterval(checkEngine, 30000)
+    return () => clearInterval(t)
+  }, [])
+
+  // Fetch costs
+  useEffect(() => {
+    if (tab !== 'revenue' && tab !== 'costs') return
+    const fetchCosts = async () => {
+      try {
+        const res = await fetch(`${engineUrl}/mc/costs`, { headers: { 'x-api-key': engineKey } })
+        if (res.ok) {
+          setUsageCosts(await res.json())
+        }
+      } catch (e) {
+        console.error('Failed to fetch costs', e)
+      }
+    }
+    fetchCosts()
+    const t = setInterval(fetchCosts, 60000) // update every minute
+    return () => clearInterval(t)
+  }, [tab])
 
   const [intelDraft, setIntelDraft] = useState<{ category: IntelCategory; title: string; summary: string; source: string; importance: IntelImportance }>(
     { category: 'AI News', title: '', summary: '', source: '', importance: 'notable' }
@@ -487,24 +515,6 @@ export default function MissionControlPage() {
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
-
-  // Auto-archive past meetings
-  useEffect(() => {
-    const upcoming: Meeting[] = []
-    const past: Meeting[] = [...meetingsPast]
-    for (const m of meetings) {
-      if (+new Date(m.whenISO) < +now - 60_000) past.push(m)
-      else upcoming.push(m)
-    }
-    if (upcoming.length !== meetings.length || past.length !== meetingsPast.length) {
-      setMeetings(upcoming.sort((a,b) => +new Date(a.whenISO) - +new Date(b.whenISO)))
-      // de-duplicate by id
-      const seen = new Set<string>()
-      const merged = past.filter(p => (seen.has(p.id) ? false : (seen.add(p.id), true)))
-      setMeetingsPast(merged)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [now])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -691,7 +701,7 @@ export default function MissionControlPage() {
             <nav className="hidden md:flex items-center gap-2 ml-2">
               <TabButton active={tab === 'revenue'} label="💰 Revenue" onClick={() => setTab('revenue')} />
               <TabButton active={tab === 'command'} label="🏢 Command Center" onClick={() => setTab('command')} />
-              <TabButton active={tab === 'meetings'} label="📞 Meetings" onClick={() => setTab('meetings')} />
+              <TabButton active={tab === 'costs'} label="💸 Costs" onClick={() => setTab('costs')} />
               <TabButton active={tab === 'intel'} label="📡 Intel" onClick={() => setTab('intel')} />
             </nav>
 
@@ -719,7 +729,7 @@ export default function MissionControlPage() {
             <TabButton active={tab === 'notes'} label="📝" onClick={() => setTab('notes')} />
             <TabButton active={tab === 'revenue'} label="💰" onClick={() => setTab('revenue')} />
             <TabButton active={tab === 'command'} label="🏢" onClick={() => setTab('command')} />
-            <TabButton active={tab === 'meetings'} label="📞" onClick={() => setTab('meetings')} />
+            <TabButton active={tab === 'costs'} label="💸" onClick={() => setTab('costs')} />
             <TabButton active={tab === 'intel'} label="📡" onClick={() => setTab('intel')} />
             <div className="flex-1" />
             <button
@@ -1561,6 +1571,38 @@ export default function MissionControlPage() {
                 </div>
               </div>
 
+              {/* Token Usage & Costs (Engine) */}
+              {usageCosts && (
+                <div className="mc-card p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold">Token Usage & Costs (Recent)</div>
+                      <div className="text-xs text-[color:var(--muted)]">Real-time from Engine</div>
+                    </div>
+                    <div className="text-sm font-bold text-white/90">
+                      Total: ${usageCosts.totalCost.toFixed(4)}
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="mc-card p-3 bg-white/5">
+                      <div className="text-xs text-[color:var(--muted)]">Total Tokens</div>
+                      <div className="text-xl font-semibold">{usageCosts.totalTokens.toLocaleString()}</div>
+                    </div>
+                    <div className="md:col-span-2 mc-card p-3 bg-white/5">
+                      <div className="text-xs text-[color:var(--muted)]">Breakdown by Model</div>
+                      <div className="mt-2 space-y-1">
+                        {usageCosts.breakdown.slice(0, 5).map((row) => (
+                          <div key={row.model} className="flex justify-between text-sm border-b border-white/5 pb-1 last:border-0 last:pb-0">
+                            <span className="text-white/80">{row.label || row.model}</span>
+                            <span className="font-mono text-white/60">${row.cost.toFixed(4)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Clients */}
               <div className="mc-card p-5">
                 <div className="flex items-center justify-between gap-3">
@@ -1682,9 +1724,9 @@ export default function MissionControlPage() {
             </motion.section>
           ) : null}
 
-          {tab === 'meetings' ? (
+          {tab === 'costs' ? (
             <motion.section
-              key="meetings"
+              key="costs"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 6 }}
@@ -1694,153 +1736,139 @@ export default function MissionControlPage() {
               <div className="mc-card p-5">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-2xl font-bold tracking-tight">Meetings</div>
-                    <div className="text-sm text-[color:var(--muted)]">Upcoming, agendas, notes, actions — with archive</div>
+                    <div className="text-2xl font-bold tracking-tight">AI Cost Analysis</div>
+                    <div className="text-sm text-[color:var(--muted)]">Real-time usage tracking and budget monitoring</div>
                   </div>
+                  <div className="text-sm text-[color:var(--muted)]">Updated: {new Date().toLocaleTimeString('de-DE')}</div>
                 </div>
               </div>
 
-              {/* Today highlight */}
-              <div className="mc-card p-5">
-                <div className="font-semibold">Today</div>
-                <div className="mt-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {meetings
-                    .filter(m => new Date(m.whenISO).toDateString() === now.toDateString())
-                    .sort((a,b) => +new Date(a.whenISO) - +new Date(b.whenISO))
-                    .map(m => {
-                      const diff = +new Date(m.whenISO) - +now
-                      const left = Math.max(0, diff)
-                      const hh = String(Math.floor(left / 3_600_000)).padStart(2, '0')
-                      const mm = String(Math.floor((left % 3_600_000) / 60_000)).padStart(2, '0')
-                      const ss = String(Math.floor((left % 60_000) / 1000)).padStart(2, '0')
-                      return (
-                        <div key={m.id} className="mc-card p-4 shadow-none">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="font-semibold truncate">{m.title}</div>
-                              <div className="text-xs text-white/60">{new Date(m.whenISO).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} • {m.type} • {m.attendees || '—'}</div>
-                            </div>
-                            <div className="mc-countdown text-sm text-white/80">{hh}:{mm}:{ss}</div>
-                          </div>
+              {usageCosts ? (
+                <>
+                  {/* Overview Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <MetricCard
+                      label="Total Cost (30d)"
+                      value={`$${usageCosts.totalCost.toFixed(4)}`}
+                      icon="💸"
+                      accentBar="var(--accent)"
+                    />
+                    <MetricCard
+                      label="Total Tokens (30d)"
+                      value={usageCosts.totalTokens.toLocaleString()}
+                      icon="🔢"
+                      accentBar="rgba(99, 102, 241, 0.55)"
+                    />
+                    <div className="mc-card p-4">
+                      <div className="h-[3px] rounded bg-emerald-500/50" />
+                      <div className="mt-4">
+                        <div className="flex items-center gap-2 text-sm text-[color:var(--muted)]">
+                          <span aria-hidden className="text-base">📊</span>
+                          <span>Budget Usage</span>
                         </div>
-                      )
-                    })}
-                  {meetings.filter(m => new Date(m.whenISO).toDateString() === now.toDateString()).length === 0 && (
-                    <div className="text-sm text-white/60">No meetings today.</div>
-                  )}
-                </div>
-              </div>
-
-              {/* Add form */}
-              <div className="mc-card p-5">
-                <div className="grid grid-cols-1 lg:grid-cols-5 gap-2">
-                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Title" value={meetingDraft.title} onChange={(e) => setMeetingDraft((d) => ({ ...d, title: e.target.value }))} />
-                  <input className="mc-input px-3 py-2 text-sm w-full" type="datetime-local" value={meetingDraft.whenISO} onChange={(e) => setMeetingDraft((d) => ({ ...d, whenISO: e.target.value }))} />
-                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Attendees" value={meetingDraft.attendees} onChange={(e) => setMeetingDraft((d) => ({ ...d, attendees: e.target.value }))} />
-                  <select className="mc-input px-3 py-2 text-sm w-full" value={meetingDraft.type} onChange={(e) => setMeetingDraft((d) => ({ ...d, type: e.target.value as MeetingType }))}>
-                    <option value="call">call</option>
-                    <option value="zoom">zoom</option>
-                    <option value="in-person">in-person</option>
-                  </select>
-                  <input className="mc-input px-3 py-2 text-sm w-full" placeholder="Prep notes" value={meetingDraft.prep} onChange={(e) => setMeetingDraft((d) => ({ ...d, prep: e.target.value }))} />
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="px-3 py-2 rounded-xl text-sm border border-[rgba(148,181,160,0.25)] mc-accent-glow hover:bg-white/5 transition"
-                    onClick={() => {
-                      const title = meetingDraft.title.trim(); if (!title) return
-                      const m: Meeting = { id: uid('mt'), title, whenISO: meetingDraft.whenISO, attendees: meetingDraft.attendees.trim(), type: meetingDraft.type, prep: meetingDraft.prep.trim(), agenda: [], notes: '', actions: [], createdAt: Date.now() }
-                      setMeetings(prev => [m, ...prev].sort((a,b) => +new Date(a.whenISO) - +new Date(b.whenISO)))
-                      setMeetingDraft({ title: '', whenISO: new Date().toISOString().slice(0, 16), attendees: '', type: 'zoom', prep: '' })
-                      logActivity(`Added meeting: ${m.title}`)
-                    }}
-                  >
-                    {editingMeeting ? 'Save' : 'Add'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Upcoming list */}
-              <div className="mc-card p-5">
-                <div className="font-semibold">Upcoming</div>
-                <div className="mt-3 space-y-2">
-                  {meetings.length === 0 ? (
-                    <div className="text-sm text-white/60">No upcoming meetings.</div>
-                  ) : (
-                    meetings.map((m) => (
-                      <div key={m.id} className="mc-card p-4 shadow-none">
-                        <details>
-                          <summary className="flex items-center justify-between gap-3 cursor-pointer list-none">
-                            <div className="min-w-0">
-                              <div className="font-semibold truncate">{m.title}</div>
-                              <div className="text-xs text-white/60">{new Date(m.whenISO).toLocaleString('de-DE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} • {m.type} • {m.attendees || '—'}</div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button type="button" className="text-xs text-white/60 hover:text-white/90 transition" onClick={(e) => { e.preventDefault(); setMeetingDraft({ title: m.title, whenISO: m.whenISO, attendees: m.attendees, type: m.type, prep: m.prep }); setEditingMeeting(m); setMeetings(prev => prev.filter(x=>x.id!==m.id)) }}>Edit</button>
-                              <button type="button" className="text-xs text-red-300 hover:text-red-200 transition" onClick={(e) => { e.preventDefault(); setMeetings(prev => prev.filter(x => x.id !== m.id)) }}>Delete</button>
-                            </div>
-                          </summary>
-                          <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3">
-                            <div className="mc-card p-3">
-                              <div className="text-xs text-[color:var(--muted)]">Agenda</div>
-                              <div className="mt-2 space-y-2">
-                                {m.agenda.map((it) => (
-                                  <label key={it.id} className="flex items-center gap-2 text-sm">
-                                    <input type="checkbox" className="accent-[color:var(--accentSolid)]" checked={it.done} onChange={() => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, agenda: x.agenda.map(a => a.id === it.id ? { ...a, done: !a.done } : a) } : x))} />
-                                    <input className={clsx('flex-1 bg-transparent outline-none', it.done ? 'line-through text-white/50' : 'text-white/90')} value={it.text} onChange={(e) => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, agenda: x.agenda.map(a => a.id === it.id ? { ...a, text: e.target.value } : a) } : x))} />
-                                  </label>
-                                ))}
-                                <button type="button" className="text-xs px-2 py-1 rounded border border-[color:var(--border)] hover:bg-white/5" onClick={() => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, agenda: [...x.agenda, { id: uid('ag'), text: 'New item', done: false }] } : x))}>Add item</button>
-                              </div>
-                            </div>
-                            <div className="mc-card p-3">
-                              <div className="text-xs text-[color:var(--muted)]">Notes</div>
-                              <textarea className="mc-input mt-2 px-3 py-2 text-sm w-full min-h-[120px]" value={m.notes} onChange={(e) => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, notes: e.target.value } : x))} />
-                            </div>
-                            <div className="mc-card p-3">
-                              <div className="text-xs text-[color:var(--muted)]">Action items</div>
-                              <div className="mt-2 space-y-2">
-                                {m.actions.map((it) => (
-                                  <label key={it.id} className="flex items-center gap-2 text-sm">
-                                    <input type="checkbox" className="accent-[color:var(--accentSolid)]" checked={it.done} onChange={() => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, actions: x.actions.map(a => a.id === it.id ? { ...a, done: !a.done } : a) } : x))} />
-                                    <input className={clsx('flex-1 bg-transparent outline-none', it.done ? 'line-through text-white/50' : 'text-white/90')} value={it.text} onChange={(e) => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, actions: x.actions.map(a => a.id === it.id ? { ...a, text: e.target.value } : a) } : x))} />
-                                  </label>
-                                ))}
-                                <button type="button" className="text-xs px-2 py-1 rounded border border-[color:var(--border)] hover:bg-white/5" onClick={() => setMeetings(prev => prev.map(x => x.id === m.id ? { ...x, actions: [...x.actions, { id: uid('ac'), text: 'New action', done: false }] } : x))}>Add action</button>
-                              </div>
-                            </div>
-                          </div>
-                        </details>
+                        <div className="mt-3">
+                           <div className="flex justify-between text-xs mb-1">
+                             <span>${usageCosts.totalCost.toFixed(2)}</span>
+                             <span className="text-[color:var(--muted)]">Limit: $50.00</span>
+                           </div>
+                           <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                             <div 
+                               className="h-full bg-emerald-500" 
+                               style={{ width: `${Math.min(100, (usageCosts.totalCost / 50) * 100)}%` }} 
+                             />
+                           </div>
+                        </div>
                       </div>
-                    ))
-                  )}
-                </div>
-              </div>
+                    </div>
+                  </div>
 
-              {/* Past archive */}
-              <div className="mc-card p-5">
-                <div className="font-semibold">Past</div>
-                <div className="mt-3 space-y-2">
-                  {meetingsPast.length === 0 ? (
-                    <div className="text-sm text-white/60">No past meetings yet.</div>
-                  ) : (
-                    meetingsPast
-                      .sort((a,b) => +new Date(b.whenISO) - +new Date(a.whenISO))
-                      .map(m => (
-                        <div key={m.id} className="mc-card p-4 shadow-none">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="font-semibold truncate">{m.title}</div>
-                              <div className="text-xs text-white/60">{new Date(m.whenISO).toLocaleString('de-DE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} • {m.type} • {m.attendees || '—'}</div>
+                  {/* Daily History Chart */}
+                  <div className="mc-card p-5">
+                    <div className="font-semibold mb-4">Daily Cost (Last 30 Days)</div>
+                    <div className="h-[160px] flex items-end gap-1">
+                      {usageCosts.dailyHistory?.map((day, i) => {
+                        const max = Math.max(0.1, ...usageCosts.dailyHistory.map(d => d.value))
+                        const h = (day.value / max) * 100
+                        return (
+                          <div key={i} className="flex-1 flex flex-col items-center group relative">
+                            <div 
+                              className="w-full bg-[color:var(--accentSolid)]/40 rounded-t hover:bg-[color:var(--accentSolid)] transition-colors" 
+                              style={{ height: `${Math.max(1, h)}%` }} 
+                            />
+                            {/* Tooltip */}
+                            <div className="absolute bottom-full mb-2 hidden group-hover:block z-10 bg-black/90 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap border border-white/10">
+                              {day.date}: ${day.value.toFixed(4)}
                             </div>
-                            <button type="button" className="text-xs text-white/60 hover:text-white/90 transition" onClick={() => { setMeetings(prev => [m, ...prev]); setMeetingsPast(prev => prev.filter(x => x.id !== m.id)) }}>Restore</button>
                           </div>
-                        </div>
-                      ))
-                  )}
+                        )
+                      })}
+                    </div>
+                    <div className="flex justify-between mt-2 text-[10px] text-white/40">
+                      <span>{usageCosts.dailyHistory?.[0]?.date}</span>
+                      <span>{usageCosts.dailyHistory?.[usageCosts.dailyHistory.length - 1]?.date}</span>
+                    </div>
+                  </div>
+
+                  {/* Model Breakdown */}
+                  <div className="mc-card p-5">
+                    <div className="font-semibold mb-4">Model Breakdown</div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="text-[color:var(--muted)] border-b border-white/5">
+                          <tr>
+                            <th className="pb-2 font-medium">Model</th>
+                            <th className="pb-2 font-medium text-right">Tokens (In/Out/Cache)</th>
+                            <th className="pb-2 font-medium text-right">Cost</th>
+                            <th className="pb-2 font-medium text-right">Share</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {usageCosts.breakdown.map((row) => (
+                            <tr key={row.model} className="hover:bg-white/5 transition">
+                              <td className="py-2 pr-4">
+                                <div>{row.label || row.model}</div>
+                                <div className="text-xs text-white/40">{row.model}</div>
+                              </td>
+                              <td className="py-2 px-4 text-right font-mono text-xs">
+                                <div>{(row.input/1000).toFixed(1)}k / {(row.output/1000).toFixed(1)}k</div>
+                                <div className="text-white/40">Cache: {(row.cache/1000).toFixed(1)}k</div>
+                              </td>
+                              <td className="py-2 px-4 text-right font-mono text-emerald-300">${row.cost.toFixed(4)}</td>
+                              <td className="py-2 pl-4 text-right text-[color:var(--muted)]">
+                                {((row.cost / Math.max(0.000001, usageCosts.totalCost)) * 100).toFixed(1)}%
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Pricing Reference */}
+                  <div className="mc-card p-5">
+                    <div className="font-semibold mb-2">Estimated Pricing Reference</div>
+                    <div className="text-xs text-[color:var(--muted)] mb-4">Assumed costs per 1M tokens (Input / Output)</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
+                       <div className="p-3 bg-white/5 rounded-lg border border-white/5">
+                         <div className="font-semibold text-white/90">Gemini 1.5 Pro</div>
+                         <div className="mt-1 text-white/60 text-xs">$3.50 / $10.50</div>
+                       </div>
+                       <div className="p-3 bg-white/5 rounded-lg border border-white/5">
+                         <div className="font-semibold text-white/90">GPT-4o</div>
+                         <div className="mt-1 text-white/60 text-xs">$5.00 / $15.00</div>
+                       </div>
+                       <div className="p-3 bg-white/5 rounded-lg border border-white/5">
+                         <div className="font-semibold text-white/90">Claude 3.5 Sonnet</div>
+                         <div className="mt-1 text-white/60 text-xs">$3.00 / $15.00</div>
+                       </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="mc-card p-8 text-center text-[color:var(--muted)]">
+                  Loading cost data...
                 </div>
-              </div>
+              )}
             </motion.section>
           ) : null}
 

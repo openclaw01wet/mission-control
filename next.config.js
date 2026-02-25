@@ -1,13 +1,15 @@
 /** @type {import('next').NextConfig} */
-const isGhPages = process.env.GITHUB_PAGES === 'true'
-const repoName = 'mission-control'
-
 const nextConfig = {
+  output: 'standalone', // Optimized for Docker/Self-hosting
   reactStrictMode: true,
-  output: 'export',
-  images: { unoptimized: true },
-  assetPrefix: isGhPages ? `/${repoName}/` : undefined,
-  basePath: isGhPages ? `/${repoName}` : undefined,
+  async rewrites() {
+    return [
+      {
+        source: '/mc/:path*',
+        destination: 'http://127.0.0.1:8899/mc/:path*', // Proxy to Engine
+      },
+    ]
+  },
 }
 
 module.exports = nextConfig
